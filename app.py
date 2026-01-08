@@ -2,34 +2,51 @@ import streamlit as st
 import google.generativeai as genai
 from PIL import Image
 import io
+import base64
+import streamlit.components.v1 as components
 
 # ==========================================
-# 1. 画像処理関数（2:3比率 / 1000px / 300kb制限）
+# 1. 画像処理・ユーティリティ関数
 # ==========================================
+
 def process_and_compress_image(img, target_width=1000, max_kb=300):
-    # 2:3の比率に強制リサイズ (1000px x 1500px)
+    """2:3比率にリサイズし、300kb以下に圧縮する"""
     target_height = int(target_width * 1.5)
     img = img.resize((target_width, target_height), Image.LANCZOS)
     
-    # 300kb以下になるまで画質(quality)を下げていく
     quality = 95
     while True:
         buf = io.BytesIO()
-        # マネキン素体なのでJPEGで保存
         img.save(buf, format="JPEG", quality=quality, optimize=True)
         size_kb = len(buf.getvalue()) / 1024
         if size_kb <= max_kb or quality <= 10:
             break
-        quality -= 5  # 5ずつ画質を落とす
-    
-    return buf.getvalue(), size_kb, quality
+        quality -= 5
+    return buf.getvalue(), size_kb
+
+def get_b64_json_list(image_list):
+    """JavaScriptに渡すためのBase64データリストを作成"""
+    js_data = []
+    for name, data in image_list:
+        b64 = base64.b64encode(data).decode()
+        js_data.append(f'{{ "data": "data:image/jpeg;base64,{b64}", "name": "{name}.jpg" }}')
+    return "[" + ",".join(js_data) + "]"
 
 # ==========================================
-# 2. 初期設定
+# 2. アプリ初期設定
 # ==========================================
-st.set_page_config(page_title="Mannequin Pose Gen", layout="centered")
-st.title("🤖 マネキンポーズ素材生成")
-st.write("設定: 2:3比率 / 横1000px / 300kb以下")
+
+st.set_page_config(page_title="Multi-Angle Mannequin Gen", layout="wide")
+
+# カスタムCSS: ボタンを目立たせる
+st.markdown("""
+    <style>
+    .stButton button { width: 100%; border-radius: 5px; height: 3em; font-weight: bold; }
+    </style>
+    """, unsafe_allow_view_runtime=True)
+
+st.title("🤖 マネキンポーズ素材一括生成システム")
+st.write("3アングル（正面・斜め・側面）を自動生成し、連続保存ダイアログを起動します。")
 
 # APIキー取得
 try:
@@ -39,64 +56,114 @@ except KeyError:
     st.stop()
 
 genai.configure(api_key=api_key)
-
-# モデル名（着せ替えツールと同じ最新プレビュー版）
-MODEL_NAME = 'gemini-3-pro-image-preview'
+MODEL_NAME = 'gemini-3-pro-image-preview' # Nano Banana Pro
 model = genai.GenerativeModel(MODEL_NAME)
 
+# セッション状態の初期化（生成画像を保持するため）
+if 'generated_images' not in st.session_state:
+    st.session_state.generated_images = []
+
 # ==========================================
-# 3. メインUI
+# 3. メインUI（サイドバー）
 # ==========================================
-uploaded_file = st.file_uploader("ポーズの元写真をアップロード", type=["jpg", "png", "jpeg"])
 
-if uploaded_file:
-    input_image = Image.open(uploaded_file)
-    st.image(input_image, caption="元画像", use_container_width=True)
+with st.sidebar:
+    st.header("1. 写真をアップロード")
+    uploaded_file = st.file_uploader("JPG/PNG形式", type=["jpg", "png", "jpeg"])
+    if uploaded_file:
+        input_image = Image.open(uploaded_file)
+        st.image(input_image, caption="元画像", use_container_width=True)
+        if st.button("一括生成を開始", type="primary"):
+            st.session_state.start_gen = True
 
-    if st.button("マネキン素材を生成", type="primary"):
-        with st.spinner('AIが生成中... (Nano Banana Pro実行中)'):
-            # プロンプト
-            prompt = """
-            A high-quality studio photograph of a neutral grey plastic mannequin.
-            Strictly replicate the exact pose and body orientation of the person in the image.
-            No hair, no clothes, no facial features. 
-            Smooth, matte surface, plain white background. Vertical 2:3 aspect ratio.
-            """
+# ==========================================
+# 4. 生成ロジック
+# ==========================================
 
-            try:
-                # 画像生成の実行
-                response = model.generate_content([prompt, input_image])
+if uploaded_file and st.session_state.get('start_gen'):
+    st.session_state.generated_images = [] # リセット
+    angles = {
+        "Front": "Viewed directly from the front (0 degrees).",
+        "Quarter": "Viewed from a 45-degree three-quarter angle.",
+        "Side": "Viewed directly from the side profile (90 degrees)."
+    }
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for i, (angle_key, angle_desc) in enumerate(angles.items()):
+        status_text.write(f"🔄 生成中 ({i+1}/3): {angle_key} アングル...")
+        
+        prompt = f"""
+        A high-quality studio photograph of a neutral grey plastic mannequin base body.
+        Depict the mannequin {angle_desc} based on the pose in the reference image.
+        Replicate the limb geometry accurately from this perspective.
+        No hair, no clothes, no facial features. 
+        Smooth, matte surface, plain white background. Vertical 2:3 aspect ratio.
+        """
+        
+        try:
+            response = model.generate_content([prompt, input_image])
+            
+            # 画像データ抽出
+            img_bytes = None
+            if hasattr(response, 'parts'):
+                for part in response.parts:
+                    if hasattr(part, 'inline_data') and part.inline_data:
+                        img_bytes = part.inline_data.data
+                        break
+            
+            if img_bytes:
+                raw_img = Image.open(io.BytesIO(img_bytes))
+                processed_bytes, size_kb = process_and_compress_image(raw_img)
+                st.session_state.generated_images.append((angle_key, processed_bytes))
+            
+            progress_bar.progress((i + 1) / 3)
+            
+        except Exception as e:
+            st.error(f"{angle_key} の生成に失敗しました: {e}")
+    
+    status_text.success("✅ 3枚すべての生成が完了しました！")
+    st.session_state.start_gen = False
 
-                # 画像データの取り出し
-                image_data = None
-                if hasattr(response, 'parts'):
-                    for part in response.parts:
-                        if hasattr(part, 'inline_data') and part.inline_data:
-                            image_data = part.inline_data.data
-                            break
-                
-                if image_data:
-                    generated_img = Image.open(io.BytesIO(image_data))
-                    
-                    # --- 画像の後処理（1000px/2:3/300kb） ---
-                    final_bytes, final_size, final_quality = process_and_compress_image(generated_img)
-                    
-                    st.success(f"生成完了！ ({final_size:.1f}kb / 縦横比 2:3)")
-                    st.image(final_bytes, caption="生成されたマネキン素材", use_container_width=True)
-                    
-                    # ダウンロードボタン
-                    st.download_button(
-                        label="ポーズ素材をダウンロード",
-                        data=final_bytes,
-                        file_name="mannequin_pose.jpg",
-                        mime="image/jpeg"
-                    )
-                else:
-                    st.error("画像データがレスポンスに含まれていませんでした。")
-                    if hasattr(response, 'text'):
-                        st.info(f"AIの応答: {response.text}")
+# ==========================================
+# 5. 表示と保存機能
+# ==========================================
 
-            except Exception as e:
-                # ここが不足していた「except」ブロックです
-                st.error(f"生成中にエラーが発生しました: {e}")
-                st.info("モデル名が正しいか、APIの制限に達していないか確認してください。")
+if st.session_state.generated_images:
+    st.divider()
+    cols = st.columns(3)
+    
+    # プレビュー表示
+    for idx, (name, data) in enumerate(st.session_state.generated_images):
+        with cols[idx]:
+            st.subheader(f"Angle: {name}")
+            st.image(data, use_container_width=True)
+            st.caption(f"1000x1500px / JPEG")
+
+    st.divider()
+    
+    # 連続保存ボタン（JavaScript実行）
+    st.write("### 💾 保存オプション")
+    st.info("※初回実行時はブラウザの「複数ファイルのダウンロード許可」を求めるポップアップが出るので『許可』してください。")
+    
+    if st.button("指定フォルダへ3枚まとめて保存 (連続ダイアログ起動)", type="primary"):
+        json_data = get_b64_json_list(st.session_state.generated_images)
+        
+        # JavaScript: 0.5秒おきにダウンロードをキックする
+        js_code = f"""
+        <script>
+            const files = {json_data};
+            files.forEach((file, index) => {{
+                setTimeout(() => {{
+                    const a = document.body.appendChild(document.createElement('a'));
+                    a.href = file.data;
+                    a.download = file.name;
+                    a.click();
+                    a.remove();
+                }}, index * 600);
+            }});
+        </script>
+        """
+        components.html(js_code, height=0)
+        st.balloons()
