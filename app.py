@@ -104,4 +104,93 @@ if uploaded_file and st.session_state.get('start_gen'):
         "真正面 (Front)": "Viewed directly from the straight-on front perspective.",
         "斜め前 (Quarter)": "Viewed from a standard 45-degree three-quarter angle.",
         "下から (Low Angle)": "A dynamic low-angle shot from below (worm's-eye view).",
-        "斜め上から (High Angle)": "A high-angle shot from diagonally above (bird's-
+        "斜め上から (High Angle)": "A high-angle shot from diagonally above (bird's-eye view)."
+    }
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    total_angles = len(angles)
+    
+    for i, (angle_key, angle_desc) in enumerate(angles.items()):
+        status_text.write(f"🔄 生成中 ({i+1}/{total_angles}): {angle_key}...")
+        
+        # === プロンプトの強化ポイント ===
+        prompt = f"""
+        [Task: Pure Body Extraction with Fixed Colors]
+        Transform the subject in the reference image into a mannequin body.
+        
+        - Style Constraint: The mannequin MUST be a uniform LIGHT GREY plastic.
+        - Background Constraint: The background MUST be solid, PURE WHITE (RGB 255,255,255) with no shadows or gradients.
+        
+        - Pose: Replicate the anatomical pose exactly.
+        - Perspective: {angle_desc}
+        - EXCLUDE: COMPLETELY REMOVE pedestals, bases, supports.
+        - Result: Generate ONLY the light grey mannequin body against the pure white background.
+        - Aspect Ratio: Vertical 2:3.
+        """
+        # ================================
+        
+        try:
+            response = model.generate_content([prompt, input_image])
+            img_bytes = None
+            if hasattr(response, 'parts'):
+                for part in response.parts:
+                    if hasattr(part, 'inline_data') and part.inline_data:
+                        img_bytes = part.inline_data.data
+                        break
+            if img_bytes:
+                raw_img = Image.open(io.BytesIO(img_bytes))
+                processed_bytes, size_kb = process_and_compress_image(raw_img)
+                st.session_state.generated_images.append((angle_key, processed_bytes))
+            progress_bar.progress((i + 1) / total_angles)
+            time.sleep(0.5)
+        except Exception as e:
+            st.error(f"{angle_key} の生成に失敗しました: {e}")
+    status_text.success(f"✅ 生成完了！(薄いグレー/白背景統一)")
+    st.session_state.start_gen = False
+
+# ==========================================
+# 5. 表示と保存機能
+# ==========================================
+
+if st.session_state.generated_images:
+    st.divider()
+    cols = st.columns(4)
+    for idx, (name, data) in enumerate(st.session_state.generated_images):
+        with cols[idx]:
+            st.subheader(name)
+            st.image(data, use_container_width=True)
+            
+            angle_fn = get_safe_angle_name(name)
+            current_fn = f"pose_{pose_id}_{angle_fn}.jpg"
+            st.download_button(label=f"保存: {current_fn}", data=data, file_name=current_fn, mime="image/jpeg", key=f"btn_{idx}")
+
+    st.divider()
+    
+    st.write(f"### 💾 一括保存 (pose_{pose_id})")
+    if st.button(f"4枚連続で保存ダイアログを開く", type="primary"):
+        json_data = get_b64_json_list(st.session_state.generated_images, pose_id)
+        
+        js_code = f"""
+        <html>
+        <body>
+        <script>
+            (async function() {{
+                const files = {json_data};
+                for (let i = 0; i < files.length; i++) {{
+                    const file = files[i];
+                    const link = document.createElement('a');
+                    link.href = file.data;
+                    link.download = file.name;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    await new Promise(r => setTimeout(r, 1000));
+                }}
+            }})();
+        </script>
+        </body>
+        </html>
+        """
+        components.html(js_code, height=1)
+        st.toast(f"ポーズ {pose_id} の一括保存を開始しました。")
