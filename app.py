@@ -38,12 +38,12 @@ def get_b64_json_list(image_list):
 
 st.set_page_config(page_title="Multi-Angle Mannequin Gen", layout="wide")
 
-# カスタムCSS: ボタンを目立たせる
+# カスタムCSS: ボタンを目立たせる（修正済み箇所）
 st.markdown("""
     <style>
     .stButton button { width: 100%; border-radius: 5px; height: 3em; font-weight: bold; }
     </style>
-    """, unsafe_allow_view_runtime=True)
+    """, unsafe_allow_html=True)
 
 st.title("🤖 マネキンポーズ素材一括生成システム")
 st.write("3アングル（正面・斜め・側面）を自動生成し、連続保存ダイアログを起動します。")
@@ -59,7 +59,7 @@ genai.configure(api_key=api_key)
 MODEL_NAME = 'gemini-3-pro-image-preview' # Nano Banana Pro
 model = genai.GenerativeModel(MODEL_NAME)
 
-# セッション状態の初期化（生成画像を保持するため）
+# セッション状態の初期化
 if 'generated_images' not in st.session_state:
     st.session_state.generated_images = []
 
@@ -105,7 +105,6 @@ if uploaded_file and st.session_state.get('start_gen'):
         try:
             response = model.generate_content([prompt, input_image])
             
-            # 画像データ抽出
             img_bytes = None
             if hasattr(response, 'parts'):
                 for part in response.parts:
@@ -134,7 +133,6 @@ if st.session_state.generated_images:
     st.divider()
     cols = st.columns(3)
     
-    # プレビュー表示
     for idx, (name, data) in enumerate(st.session_state.generated_images):
         with cols[idx]:
             st.subheader(f"Angle: {name}")
@@ -143,14 +141,12 @@ if st.session_state.generated_images:
 
     st.divider()
     
-    # 連続保存ボタン（JavaScript実行）
     st.write("### 💾 保存オプション")
     st.info("※初回実行時はブラウザの「複数ファイルのダウンロード許可」を求めるポップアップが出るので『許可』してください。")
     
     if st.button("指定フォルダへ3枚まとめて保存 (連続ダイアログ起動)", type="primary"):
         json_data = get_b64_json_list(st.session_state.generated_images)
         
-        # JavaScript: 0.5秒おきにダウンロードをキックする
         js_code = f"""
         <script>
             const files = {json_data};
