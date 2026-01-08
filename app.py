@@ -17,8 +17,6 @@ def process_and_compress_image(img, target_width=1000, max_kb=300):
     quality = 95
     while True:
         buf = io.BytesIO()
-        # マネキンは色数が少ないのでPNGの方が綺麗で軽量化しやすい場合もあるが
-        # ここでは確実な容量削減のためにJPEGを使用
         img.save(buf, format="JPEG", quality=quality, optimize=True)
         size_kb = len(buf.getvalue()) / 1024
         if size_kb <= max_kb or quality <= 10:
@@ -41,7 +39,6 @@ def get_b64_json_list(image_list, pose_id):
     js_data = []
     for name, data in image_list:
         angle_fn = get_safe_angle_name(name)
-        # 形式: pose_[番号]_[アングル].jpg
         filename = f"pose_{pose_id}_{angle_fn}.jpg"
         b64 = base64.b64encode(data).decode()
         js_data.append(f'{{ "data": "data:image/jpeg;base64,{b64}", "name": "{filename}" }}')
@@ -61,7 +58,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 st.title("🤖 マネキンポーズ素材一括生成")
-st.write("設定: 薄いグレーのマネキン / 完全な白背景 / 台座除去 / 4アングル")
+st.write("設定: 髪/服を完全除去したグレー素体 / 白背景 / 4アングル")
 
 try:
     api_key = st.secrets["GOOGLE_API_KEY"]
@@ -114,19 +111,22 @@ if uploaded_file and st.session_state.get('start_gen'):
     for i, (angle_key, angle_desc) in enumerate(angles.items()):
         status_text.write(f"🔄 生成中 ({i+1}/{total_angles}): {angle_key}...")
         
-        # === プロンプトの強化ポイント ===
+        # === プロンプトの超強化ポイント ===
         prompt = f"""
-        [Task: Pure Body Extraction with Fixed Colors]
-        Transform the subject in the reference image into a mannequin body.
+        [Task: Generate Clean, Featureless Base Mannequin]
         
-        - Style Constraint: The mannequin MUST be a uniform LIGHT GREY plastic.
-        - Background Constraint: The background MUST be solid, PURE WHITE (RGB 255,255,255) with no shadows or gradients.
+        **CRITICAL NEGATIVE CONSTRAINTS (MUST FOLLOW):**
+        - NO HAIR. The head must be completely BALD and smooth.
+        - NO CLOTHES. The body must be completely NUDE and smooth featureless plastic.
+        - NO FACIAL FEATURES. No eyes, no nose, no mouth. A blank surface.
+        - NO pedestal, base, or props.
         
-        - Pose: Replicate the anatomical pose exactly.
-        - Perspective: {angle_desc}
-        - EXCLUDE: COMPLETELY REMOVE pedestals, bases, supports.
-        - Result: Generate ONLY the light grey mannequin body against the pure white background.
-        - Aspect Ratio: Vertical 2:3.
+        **Generation Instructions:**
+        Based on the pose in the reference image, generate a uniform LIGHT GREY plastic mannequin base body.
+        The surface must be perfectly smooth and matte, stripping away all textures of hair and fabric from the original image.
+        Perspective: {angle_desc}
+        Background: Solid, PURE WHITE (RGB 255,255,255).
+        Aspect Ratio: Vertical 2:3.
         """
         # ================================
         
@@ -146,7 +146,7 @@ if uploaded_file and st.session_state.get('start_gen'):
             time.sleep(0.5)
         except Exception as e:
             st.error(f"{angle_key} の生成に失敗しました: {e}")
-    status_text.success(f"✅ 生成完了！(薄いグレー/白背景統一)")
+    status_text.success(f"✅ 生成完了！(髪/服完全除去・グレー素体)")
     st.session_state.start_gen = False
 
 # ==========================================
