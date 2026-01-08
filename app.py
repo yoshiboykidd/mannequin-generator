@@ -11,11 +11,14 @@ import time
 # ==========================================
 
 def process_and_compress_image(img, target_width=1000, max_kb=300):
+    """2:3比率にリサイズし、300kb以下に圧縮する"""
     target_height = int(target_width * 1.5)
     img = img.resize((target_width, target_height), Image.LANCZOS)
     quality = 95
     while True:
         buf = io.BytesIO()
+        # マネキンは色数が少ないのでPNGの方が綺麗で軽量化しやすい場合もあるが
+        # ここでは確実な容量削減のためにJPEGを使用
         img.save(buf, format="JPEG", quality=quality, optimize=True)
         size_kb = len(buf.getvalue()) / 1024
         if size_kb <= max_kb or quality <= 10:
@@ -58,6 +61,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 st.title("🤖 マネキンポーズ素材一括生成")
+st.write("設定: 薄いグレーのマネキン / 完全な白背景 / 台座除去 / 4アングル")
 
 try:
     api_key = st.secrets["GOOGLE_API_KEY"]
@@ -78,7 +82,6 @@ if 'generated_images' not in st.session_state:
 
 with st.sidebar:
     st.header("1. 保存設定")
-    # --- ポーズ番号の入力欄を追加 ---
     pose_id = st.text_input("ポーズ番号 (例: 01, 02...)", value="01")
     st.info(f"保存名: pose_{pose_id}_[Angle].jpg")
     
@@ -101,87 +104,4 @@ if uploaded_file and st.session_state.get('start_gen'):
         "真正面 (Front)": "Viewed directly from the straight-on front perspective.",
         "斜め前 (Quarter)": "Viewed from a standard 45-degree three-quarter angle.",
         "下から (Low Angle)": "A dynamic low-angle shot from below (worm's-eye view).",
-        "斜め上から (High Angle)": "A high-angle shot from diagonally above (bird's-eye view)."
-    }
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    total_angles = len(angles)
-    
-    for i, (angle_key, angle_desc) in enumerate(angles.items()):
-        status_text.write(f"🔄 生成中 ({i+1}/{total_angles}): {angle_key}...")
-        prompt = f"""
-        [Task: Pure Body Extraction]
-        Transform the subject in the reference image into a neutral grey plastic mannequin.
-        - Pose: Replicate the anatomical pose exactly.
-        - Perspective: {angle_desc}
-        - EXCLUDE: COMPLETELY REMOVE pedestals, bases, supports.
-        - Result: Generate ONLY the mannequin's body.
-        - Background: Solid plain white. Vertical 2:3 aspect ratio.
-        """
-        try:
-            response = model.generate_content([prompt, input_image])
-            img_bytes = None
-            if hasattr(response, 'parts'):
-                for part in response.parts:
-                    if hasattr(part, 'inline_data') and part.inline_data:
-                        img_bytes = part.inline_data.data
-                        break
-            if img_bytes:
-                raw_img = Image.open(io.BytesIO(img_bytes))
-                processed_bytes, size_kb = process_and_compress_image(raw_img)
-                st.session_state.generated_images.append((angle_key, processed_bytes))
-            progress_bar.progress((i + 1) / total_angles)
-            time.sleep(0.5)
-        except Exception as e:
-            st.error(f"{angle_key} の生成に失敗しました: {e}")
-    status_text.success(f"✅ 生成完了！")
-    st.session_state.start_gen = False
-
-# ==========================================
-# 5. 表示と保存機能
-# ==========================================
-
-if st.session_state.generated_images:
-    st.divider()
-    cols = st.columns(4)
-    for idx, (name, data) in enumerate(st.session_state.generated_images):
-        with cols[idx]:
-            st.subheader(name)
-            st.image(data, use_container_width=True)
-            
-            # --- 個別保存ボタン：ポーズ番号を反映 ---
-            angle_fn = get_safe_angle_name(name)
-            current_fn = f"pose_{pose_id}_{angle_fn}.jpg"
-            st.download_button(label=f"保存: {current_fn}", data=data, file_name=current_fn, mime="image/jpeg", key=f"btn_{idx}")
-
-    st.divider()
-    
-    st.write(f"### 💾 一括保存 (pose_{pose_id})")
-    if st.button(f"4枚連続で保存ダイアログを開く", type="primary"):
-        # JavaScript用データ作成時にpose_idを渡す
-        json_data = get_b64_json_list(st.session_state.generated_images, pose_id)
-        
-        js_code = f"""
-        <html>
-        <body>
-        <script>
-            (async function() {{
-                const files = {json_data};
-                for (let i = 0; i < files.length; i++) {{
-                    const file = files[i];
-                    const link = document.createElement('a');
-                    link.href = file.data;
-                    link.download = file.name;
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                    await new Promise(r => setTimeout(r, 1000));
-                }}
-            }})();
-        </script>
-        </body>
-        </html>
-        """
-        components.html(js_code, height=1)
-        st.toast(f"ポーズ {pose_id} の一括保存を開始しました。")
+        "斜め上から (High Angle)": "A high-angle shot from diagonally above (bird's-
