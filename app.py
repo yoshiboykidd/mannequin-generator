@@ -4,6 +4,7 @@ from PIL import Image
 import io
 import base64
 import streamlit.components.v1 as components
+import time
 
 # ==========================================
 # 1. 画像処理・ユーティリティ関数
@@ -28,8 +29,10 @@ def get_b64_json_list(image_list):
     """JavaScriptに渡すためのBase64データリストを作成"""
     js_data = []
     for name, data in image_list:
+        # ファイル名に使える文字だけにサニタイズ
+        safe_name = name.replace(" ", "_").replace("(", "").replace(")", "")
         b64 = base64.b64encode(data).decode()
-        js_data.append(f'{{ "data": "data:image/jpeg;base64,{b64}", "name": "{name}.jpg" }}')
+        js_data.append(f'{{ "data": "data:image/jpeg;base64,{b64}", "name": "mannequin_{safe_name}.jpg" }}')
     return "[" + ",".join(js_data) + "]"
 
 # ==========================================
@@ -38,17 +41,15 @@ def get_b64_json_list(image_list):
 
 st.set_page_config(page_title="Multi-Angle Mannequin Gen", layout="wide")
 
-# カスタムCSS: ボタンを目立たせる（修正済み箇所）
 st.markdown("""
     <style>
     .stButton button { width: 100%; border-radius: 5px; height: 3em; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🤖 マネキンポーズ素材一括生成システム")
-st.write("3アングル（正面・斜め・側面）を自動生成し、連続保存ダイアログを起動します。")
+st.title("🤖 マネキンポーズ素材一括生成 (あおり/俯瞰対応)")
+st.write("元の写真から「斜め前」「下から(あおり)」「斜め上から(俯瞰)」の3アングルを生成します。")
 
-# APIキー取得
 try:
     api_key = st.secrets["GOOGLE_API_KEY"]
 except KeyError:
@@ -59,7 +60,6 @@ genai.configure(api_key=api_key)
 MODEL_NAME = 'gemini-3-pro-image-preview' # Nano Banana Pro
 model = genai.GenerativeModel(MODEL_NAME)
 
-# セッション状態の初期化
 if 'generated_images' not in st.session_state:
     st.session_state.generated_images = []
 
@@ -81,22 +81,25 @@ with st.sidebar:
 # ==========================================
 
 if uploaded_file and st.session_state.get('start_gen'):
-    st.session_state.generated_images = [] # リセット
+    st.session_state.generated_images = []
+    
+    # === ここが変更点：新しいアングル定義 ===
     angles = {
-        "Front": "Viewed directly from the front (0 degrees).",
-        "Quarter": "Viewed from a 45-degree three-quarter angle.",
-        "Side": "Viewed directly from the side profile (90 degrees)."
+        "斜め前 (Quarter)": "Viewed from a standard 45-degree three-quarter angle.",
+        "下から (Low Angle)": "A dynamic low-angle shot, viewing the mannequin from below (worm's-eye view), emphasizing its stature.",
+        "斜め上から (High Angle)": "A high-angle shot, viewing the mannequin from diagonally above (bird's-eye view), looking down."
     }
+    # =====================================
     
     progress_bar = st.progress(0)
     status_text = st.empty()
     
     for i, (angle_key, angle_desc) in enumerate(angles.items()):
-        status_text.write(f"🔄 生成中 ({i+1}/3): {angle_key} アングル...")
+        status_text.write(f"🔄 生成中 ({i+1}/3): {angle_key}...")
         
         prompt = f"""
         A high-quality studio photograph of a neutral grey plastic mannequin base body.
-        Depict the mannequin {angle_desc} based on the pose in the reference image.
+        Based on the pose in the reference image, depict the mannequin as {angle_desc}
         Replicate the limb geometry accurately from this perspective.
         No hair, no clothes, no facial features. 
         Smooth, matte surface, plain white background. Vertical 2:3 aspect ratio.
@@ -118,6 +121,7 @@ if uploaded_file and st.session_state.get('start_gen'):
                 st.session_state.generated_images.append((angle_key, processed_bytes))
             
             progress_bar.progress((i + 1) / 3)
+            time.sleep(0.5) # API負荷軽減のため少し待つ
             
         except Exception as e:
             st.error(f"{angle_key} の生成に失敗しました: {e}")
@@ -135,15 +139,13 @@ if st.session_state.generated_images:
     
     for idx, (name, data) in enumerate(st.session_state.generated_images):
         with cols[idx]:
-            st.subheader(f"Angle: {name}")
+            st.subheader(name)
             st.image(data, use_container_width=True)
             st.caption(f"1000x1500px / JPEG")
 
     st.divider()
     
     st.write("### 💾 保存オプション")
-    st.info("※初回実行時はブラウザの「複数ファイルのダウンロード許可」を求めるポップアップが出るので『許可』してください。")
-    
     if st.button("指定フォルダへ3枚まとめて保存 (連続ダイアログ起動)", type="primary"):
         json_data = get_b64_json_list(st.session_state.generated_images)
         
