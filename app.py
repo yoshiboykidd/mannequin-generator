@@ -27,7 +27,7 @@ try:
 except FileNotFoundError:
     # ローカルテスト用（secrets.tomlがない場合）のフォールバック
     # 本番環境では使用しないでください。
-    api_key = "YOUR_API_KEY_HERE" # ここに直接キーを入れるのはテスト時のみ！
+    api_key = "AIzaSyBKKvD0plBrKLAH6UbAgx1kyNBwM24Y-LM" # ここに直接キーを入れるのはテスト時のみ！
     st.warning("⚠️ APIキーがコードに直接記述されています。本番環境ではSecretsを使用してください。")
 
 if not api_key or api_key == "YOUR_API_KEY_HERE":
