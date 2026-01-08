@@ -53,7 +53,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🤖 マネキンポーズ一括生成 (身体のみ・台座除去)")
+st.title("🤖 マネキンポーズ一括生成 (4アングル)")
 
 try:
     api_key = st.secrets["GOOGLE_API_KEY"]
@@ -100,21 +100,14 @@ if uploaded_file and st.session_state.get('start_gen'):
     
     for i, (angle_key, angle_desc) in enumerate(angles.items()):
         status_text.write(f"🔄 生成中 ({i+1}/{total_angles}): {angle_key}...")
-        
-        # === 台座を除去するための強力なプロンプトに変更 ===
         prompt = f"""
         [Task: Pure Body Extraction]
         Transform the subject in the reference image into a neutral grey plastic mannequin.
-        
-        - Pose: Replicate the anatomical pose of the person/subject exactly.
+        - Pose: Replicate the anatomical pose exactly.
         - Perspective: {angle_desc}
-        - EXCLUDE: COMPLETELY REMOVE all pedestals, bases, supports, chairs, props, and floors from the reference image.
-        - Result: Generate ONLY the mannequin's body. The mannequin should be standing or floating in a void or on a plain flat floor.
-        - Detail: Smooth matte texture, no hair, no facial features, no clothes.
-        - Background: Solid plain white background only.
-        - Composition: Full body, vertical 2:3 aspect ratio.
+        - EXCLUDE: COMPLETELY REMOVE pedestals, bases, supports.
+        - Background: Solid plain white. Vertical 2:3 aspect ratio.
         """
-        
         try:
             response = model.generate_content([prompt, input_image])
             img_bytes = None
@@ -131,8 +124,7 @@ if uploaded_file and st.session_state.get('start_gen'):
             time.sleep(0.5)
         except Exception as e:
             st.error(f"{angle_key} の生成に失敗しました: {e}")
-    
-    status_text.success(f"✅ 台座除去版の生成が完了しました！")
+    status_text.success(f"✅ 生成完了！")
     st.session_state.start_gen = False
 
 # ==========================================
@@ -152,25 +144,34 @@ if st.session_state.generated_images:
     st.divider()
     
     st.write("### 💾 一括保存")
-    if st.button("4枚連続で保存ダイアログを開く", type="primary"):
+    
+    # 修正ポイント：JavaScriptの実行コードをより安全に
+    if st.button("4枚連続で保存ダイアログを開く", type="primary", key="bulk_save"):
         json_data = get_b64_json_list(st.session_state.generated_images)
+        
+        # 修正：より確実に発火するようにコードを微調整
         js_code = f"""
+        <html>
+        <body>
         <script>
-            async function downloadAll() {{
+            (async function() {{
                 const files = {json_data};
                 for (let i = 0; i < files.length; i++) {{
                     const file = files[i];
-                    const a = document.createElement('a');
-                    a.href = file.data;
-                    a.download = file.name;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    await new Promise(resolve => setTimeout(resolve, 800));
+                    const link = document.createElement('a');
+                    link.href = file.data;
+                    link.download = file.name;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    // 保存先を選ぶ時間を考慮し、少し長めに待機
+                    await new Promise(r => setTimeout(r, 1000));
                 }}
-            }}
-            downloadAll();
+            }})();
         </script>
+        </body>
+        </html>
         """
+        # height=0だとブラウザが無視することがあるため、1に設定
         components.html(js_code, height=1)
-        st.toast("一括保存を開始しました。")
+        st.toast("一括保存用のダイアログを順番に呼び出しています...", icon="📂")
