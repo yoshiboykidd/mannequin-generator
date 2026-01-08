@@ -23,21 +23,25 @@ def process_and_compress_image(img, target_width=1000, max_kb=300):
         quality -= 5
     return buf.getvalue(), size_kb
 
-def get_safe_filename(name):
+def get_safe_angle_name(name):
+    """アングル名を英語のファイル名用に変換"""
     mapping = {
         "真正面 (Front)": "Front",
         "斜め前 (Quarter)": "Quarter",
         "下から (Low Angle)": "Low",
         "斜め上から (High Angle)": "High"
     }
-    return mapping.get(name, "mannequin_pose")
+    return mapping.get(name, "pose")
 
-def get_b64_json_list(image_list):
+def get_b64_json_list(image_list, pose_id):
+    """JavaScript用：ポーズ番号を含めたファイル名リストを作成"""
     js_data = []
     for name, data in image_list:
-        safe_name = get_safe_filename(name)
+        angle_fn = get_safe_angle_name(name)
+        # 形式: pose_[番号]_[アングル].jpg
+        filename = f"pose_{pose_id}_{angle_fn}.jpg"
         b64 = base64.b64encode(data).decode()
-        js_data.append(f'{{ "data": "data:image/jpeg;base64,{b64}", "name": "mannequin_{safe_name}.jpg" }}')
+        js_data.append(f'{{ "data": "data:image/jpeg;base64,{b64}", "name": "{filename}" }}')
     return "[" + ",".join(js_data) + "]"
 
 # ==========================================
@@ -53,7 +57,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🤖 マネキンポーズ一括生成 (4アングル)")
+st.title("🤖 マネキンポーズ素材一括生成")
 
 try:
     api_key = st.secrets["GOOGLE_API_KEY"]
@@ -73,7 +77,13 @@ if 'generated_images' not in st.session_state:
 # ==========================================
 
 with st.sidebar:
-    st.header("1. 写真をアップロード")
+    st.header("1. 保存設定")
+    # --- ポーズ番号の入力欄を追加 ---
+    pose_id = st.text_input("ポーズ番号 (例: 01, 02...)", value="01")
+    st.info(f"保存名: pose_{pose_id}_[Angle].jpg")
+    
+    st.divider()
+    st.header("2. 写真をアップロード")
     uploaded_file = st.file_uploader("JPG/PNG形式", type=["jpg", "png", "jpeg"])
     if uploaded_file:
         input_image = Image.open(uploaded_file)
@@ -106,6 +116,7 @@ if uploaded_file and st.session_state.get('start_gen'):
         - Pose: Replicate the anatomical pose exactly.
         - Perspective: {angle_desc}
         - EXCLUDE: COMPLETELY REMOVE pedestals, bases, supports.
+        - Result: Generate ONLY the mannequin's body.
         - Background: Solid plain white. Vertical 2:3 aspect ratio.
         """
         try:
@@ -138,18 +149,19 @@ if st.session_state.generated_images:
         with cols[idx]:
             st.subheader(name)
             st.image(data, use_container_width=True)
-            safe_fn = get_safe_filename(name)
-            st.download_button(label=f"保存: {name}", data=data, file_name=f"mannequin_{safe_fn}.jpg", mime="image/jpeg", key=f"btn_{idx}")
+            
+            # --- 個別保存ボタン：ポーズ番号を反映 ---
+            angle_fn = get_safe_angle_name(name)
+            current_fn = f"pose_{pose_id}_{angle_fn}.jpg"
+            st.download_button(label=f"保存: {current_fn}", data=data, file_name=current_fn, mime="image/jpeg", key=f"btn_{idx}")
 
     st.divider()
     
-    st.write("### 💾 一括保存")
-    
-    # 修正ポイント：JavaScriptの実行コードをより安全に
-    if st.button("4枚連続で保存ダイアログを開く", type="primary", key="bulk_save"):
-        json_data = get_b64_json_list(st.session_state.generated_images)
+    st.write(f"### 💾 一括保存 (pose_{pose_id})")
+    if st.button(f"4枚連続で保存ダイアログを開く", type="primary"):
+        # JavaScript用データ作成時にpose_idを渡す
+        json_data = get_b64_json_list(st.session_state.generated_images, pose_id)
         
-        # 修正：より確実に発火するようにコードを微調整
         js_code = f"""
         <html>
         <body>
@@ -164,7 +176,6 @@ if st.session_state.generated_images:
                     document.body.appendChild(link);
                     link.click();
                     document.body.removeChild(link);
-                    // 保存先を選ぶ時間を考慮し、少し長めに待機
                     await new Promise(r => setTimeout(r, 1000));
                 }}
             }})();
@@ -172,6 +183,5 @@ if st.session_state.generated_images:
         </body>
         </html>
         """
-        # height=0だとブラウザが無視することがあるため、1に設定
         components.html(js_code, height=1)
-        st.toast("一括保存用のダイアログを順番に呼び出しています...", icon="📂")
+        st.toast(f"ポーズ {pose_id} の一括保存を開始しました。")
