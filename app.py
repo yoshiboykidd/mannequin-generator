@@ -25,12 +25,21 @@ def process_and_compress_image(img, target_width=1000, max_kb=300):
         quality -= 5
     return buf.getvalue(), size_kb
 
+def get_safe_filename(name):
+    """ファイル名として安全な文字列に変換"""
+    mapping = {
+        "真正面 (Front)": "Front",
+        "斜め前 (Quarter)": "Quarter",
+        "下から (Low Angle)": "Low",
+        "斜め上から (High Angle)": "High"
+    }
+    return mapping.get(name, "mannequin_pose")
+
 def get_b64_json_list(image_list):
     """JavaScriptに渡すためのBase64データリストを作成"""
     js_data = []
     for name, data in image_list:
-        # ファイル名に使える文字だけにサニタイズ
-        safe_name = name.replace(" ", "_").replace("(", "").replace(")", "")
+        safe_name = get_safe_filename(name)
         b64 = base64.b64encode(data).decode()
         js_data.append(f'{{ "data": "data:image/jpeg;base64,{b64}", "name": "mannequin_{safe_name}.jpg" }}')
     return "[" + ",".join(js_data) + "]"
@@ -44,11 +53,12 @@ st.set_page_config(page_title="Multi-Angle Mannequin Gen", layout="wide")
 st.markdown("""
     <style>
     .stButton button { width: 100%; border-radius: 5px; height: 3em; font-weight: bold; }
+    /* ダウンロードボタン専用のスタイル */
+    .stDownloadButton button { background-color: #f0f2f6; color: #31333F; height: 2.5em !important; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🤖 マネキンポーズ素材一括生成 (あおり/俯瞰対応)")
-st.write("元の写真から「斜め前」「下から(あおり)」「斜め上から(俯瞰)」の3アングルを生成します。")
+st.title("🤖 マネキンポーズ素材一括生成 (4アングル/個別保存対応)")
 
 try:
     api_key = st.secrets["GOOGLE_API_KEY"]
@@ -57,7 +67,7 @@ except KeyError:
     st.stop()
 
 genai.configure(api_key=api_key)
-MODEL_NAME = 'gemini-3-pro-image-preview' # Nano Banana Pro
+MODEL_NAME = 'gemini-3-pro-image-preview'
 model = genai.GenerativeModel(MODEL_NAME)
 
 if 'generated_images' not in st.session_state:
@@ -73,7 +83,7 @@ with st.sidebar:
     if uploaded_file:
         input_image = Image.open(uploaded_file)
         st.image(input_image, caption="元画像", use_container_width=True)
-        if st.button("一括生成を開始", type="primary"):
+        if st.button("4アングル一括生成を開始", type="primary"):
             st.session_state.start_gen = True
 
 # ==========================================
@@ -83,19 +93,19 @@ with st.sidebar:
 if uploaded_file and st.session_state.get('start_gen'):
     st.session_state.generated_images = []
     
-    # === ここが変更点：新しいアングル定義 ===
     angles = {
+        "真正面 (Front)": "Viewed directly from the straight-on front perspective.",
         "斜め前 (Quarter)": "Viewed from a standard 45-degree three-quarter angle.",
         "下から (Low Angle)": "A dynamic low-angle shot, viewing the mannequin from below (worm's-eye view), emphasizing its stature.",
         "斜め上から (High Angle)": "A high-angle shot, viewing the mannequin from diagonally above (bird's-eye view), looking down."
     }
-    # =====================================
     
     progress_bar = st.progress(0)
     status_text = st.empty()
+    total_angles = len(angles)
     
     for i, (angle_key, angle_desc) in enumerate(angles.items()):
-        status_text.write(f"🔄 生成中 ({i+1}/3): {angle_key}...")
+        status_text.write(f"🔄 生成中 ({i+1}/{total_angles}): {angle_key}...")
         
         prompt = f"""
         A high-quality studio photograph of a neutral grey plastic mannequin base body.
@@ -107,7 +117,6 @@ if uploaded_file and st.session_state.get('start_gen'):
         
         try:
             response = model.generate_content([prompt, input_image])
-            
             img_bytes = None
             if hasattr(response, 'parts'):
                 for part in response.parts:
@@ -120,13 +129,13 @@ if uploaded_file and st.session_state.get('start_gen'):
                 processed_bytes, size_kb = process_and_compress_image(raw_img)
                 st.session_state.generated_images.append((angle_key, processed_bytes))
             
-            progress_bar.progress((i + 1) / 3)
-            time.sleep(0.5) # API負荷軽減のため少し待つ
+            progress_bar.progress((i + 1) / total_angles)
+            time.sleep(0.5)
             
         except Exception as e:
             st.error(f"{angle_key} の生成に失敗しました: {e}")
     
-    status_text.success("✅ 3枚すべての生成が完了しました！")
+    status_text.success(f"✅ すべての生成が完了しました！")
     st.session_state.start_gen = False
 
 # ==========================================
@@ -135,18 +144,28 @@ if uploaded_file and st.session_state.get('start_gen'):
 
 if st.session_state.generated_images:
     st.divider()
-    cols = st.columns(3)
+    cols = st.columns(4)
     
+    # プレビューと個別保存ボタン
     for idx, (name, data) in enumerate(st.session_state.generated_images):
         with cols[idx]:
             st.subheader(name)
             st.image(data, use_container_width=True)
-            st.caption(f"1000x1500px / JPEG")
+            
+            # --- ここに個別ダウンロードボタンを追加 ---
+            safe_fn = get_safe_filename(name)
+            st.download_button(
+                label=f"保存: {name}",
+                data=data,
+                file_name=f"mannequin_{safe_fn}.jpg",
+                mime="image/jpeg",
+                key=f"btn_{idx}" # 各ボタンに一意のIDを付与
+            )
 
     st.divider()
     
-    st.write("### 💾 保存オプション")
-    if st.button("指定フォルダへ3枚まとめて保存 (連続ダイアログ起動)", type="primary"):
+    st.write("### 💾 一括保存（フォルダを指定したい場合）")
+    if st.button("4枚連続で保存ダイアログを開く", type="primary"):
         json_data = get_b64_json_list(st.session_state.generated_images)
         
         js_code = f"""
