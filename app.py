@@ -46,7 +46,7 @@ def get_b64_json_list(image_dict, pose_id):
 # 2. アプリ初期設定
 # ==========================================
 
-st.set_page_config(page_title="Dramatic Mannequin Gen", layout="wide")
+st.set_page_config(page_title="Balanced Mannequin Gen", layout="wide")
 
 st.markdown("""
     <style>
@@ -56,7 +56,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🤖 マネキンポーズ素材生成 (強アングル設定)")
+st.title("🤖 マネキンポーズ素材生成 (バランス調整版)")
 
 try:
     api_key = st.secrets["GOOGLE_API_KEY"]
@@ -75,24 +75,30 @@ if 'gen_dict' not in st.session_state:
         "斜め上から (High Angle)": None
     }
 
-# --- アングル定義（プロンプトを強化） ---
+# --- アングル定義（マイルドに調整） ---
 angles_info = {
     "真正面 (Front)": "Viewed directly from the straight-on front perspective.",
-    "斜め前 (Quarter)": "A sharp, deep three-quarter view from a 45-degree angle, emphasizing strong foreshortening and 3D depth.",
-    "下から (Low Angle)": "An extreme worm's-eye view from a very low ground-level camera, looking sharply up at the mannequin to emphasize dramatic height.",
-    "斜め上から (High Angle)": "A high-angle bird's-eye view from high above, looking down steeply to show the top of the head and shoulders."
+    "斜め前 (Quarter)": "Viewed from a standard 45-degree three-quarter angle, showing depth.",
+    "下から (Low Angle)": "A dynamic low-angle shot viewing the mannequin from below, emphasizing stature.",
+    "斜め上から (High Angle)": "A high-angle shot from diagonally above, looking down to show the overall posture."
 }
 
+# --- 生成実行関数（ポーズ参照指示を復活） ---
 def run_generation(angle_key, angle_desc, input_img):
     prompt = f"""
-    [Task: Generate Clean Base Mannequin]
+    [Task: Generate Clean Base Mannequin from Reference Pose]
+    
+    **Instructions:**
+    1. Analyze the anatomical pose in the provided reference image accurately.
+    2. Generate a uniform LIGHT GREY plastic mannequin base body exactly matching that pose.
+    
     **CRITICAL NEGATIVE CONSTRAINTS:**
     - NO HAIR. NO CLOTHES. NO FACIAL FEATURES. NO pedestals or bases.
-    **Instructions:**
-    Generate a uniform LIGHT GREY plastic mannequin base body.
-    Perspective: {angle_desc}
-    Background: Solid, PURE WHITE (RGB 255,255,255).
-    Aspect Ratio: Vertical 2:3.
+    
+    **Perspective & Environment:**
+    - Perspective: {angle_desc}
+    - Background: Solid, PURE WHITE (RGB 255,255,255).
+    - Aspect Ratio: Vertical 2:3.
     """
     try:
         response = model.generate_content([prompt, input_img])
@@ -153,7 +159,7 @@ if any(st.session_state.gen_dict.values()):
                 
                 st.markdown('<div class="regen-btn">', unsafe_allow_html=True)
                 if st.button(f"🔄 {name} 再生成", key=f"regen_{idx}"):
-                    with st.spinner("角度を強めて再生成中..."):
+                    with st.spinner("再生成中..."):
                         new_data = run_generation(name, angles_info[name], input_image)
                         if new_data:
                             st.session_state.gen_dict[name] = new_data
