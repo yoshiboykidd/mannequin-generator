@@ -46,7 +46,7 @@ def get_b64_json_list(image_dict, pose_id):
 # 2. アプリ初期設定
 # ==========================================
 
-st.set_page_config(page_title="Balanced Mannequin Gen", layout="wide")
+st.set_page_config(page_title="Custom Angle Mannequin Gen", layout="wide")
 
 st.markdown("""
     <style>
@@ -56,7 +56,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🤖 マネキンポーズ素材生成 (バランス調整版)")
+st.title("🤖 マネキンポーズ素材生成 (アングル中～強設定)")
 
 try:
     api_key = st.secrets["GOOGLE_API_KEY"]
@@ -75,28 +75,28 @@ if 'gen_dict' not in st.session_state:
         "斜め上から (High Angle)": None
     }
 
-# --- アングル定義（マイルドに調整） ---
+# --- アングル定義（"ほどよい強さ"に再定義） ---
 angles_info = {
-    "真正面 (Front)": "Viewed directly from the straight-on front perspective.",
-    "斜め前 (Quarter)": "Viewed from a standard 45-degree three-quarter angle, showing depth.",
-    "下から (Low Angle)": "A dynamic low-angle shot viewing the mannequin from below, emphasizing stature.",
-    "斜め上から (High Angle)": "A high-angle shot from diagonally above, looking down to show the overall posture."
+    "真正面 (Front)": "Viewed directly from the straight-on front perspective, strictly following the reference pose.",
+    "斜め前 (Quarter)": "A clear three-quarter view from a 45-degree angle, showing distinct 3D depth and body contour.",
+    "下から (Low Angle)": "A dramatic low-angle shot from a low camera position, looking up significantly to emphasize the height and pose.",
+    "斜め上から (High Angle)": "A significant bird's-eye view from a high camera position, looking down to clearly see the top of the body and the pose from above."
 }
 
-# --- 生成実行関数（ポーズ参照指示を復活） ---
+# --- 生成実行関数 ---
 def run_generation(angle_key, angle_desc, input_img):
     prompt = f"""
-    [Task: Generate Clean Base Mannequin from Reference Pose]
+    [Task: Generate Clean Base Mannequin with Specific Camera Angle]
     
     **Instructions:**
-    1. Analyze the anatomical pose in the provided reference image accurately.
-    2. Generate a uniform LIGHT GREY plastic mannequin base body exactly matching that pose.
+    1. Replicate the anatomical pose in the reference image EXACTLY. Do not default to a standing pose.
+    2. Transform the subject into a uniform LIGHT GREY plastic mannequin.
     
     **CRITICAL NEGATIVE CONSTRAINTS:**
-    - NO HAIR. NO CLOTHES. NO FACIAL FEATURES. NO pedestals or bases.
+    - NO HAIR. NO CLOTHES. NO FACIAL FEATURES. NO pedestals, bases, or supports.
     
-    **Perspective & Environment:**
-    - Perspective: {angle_desc}
+    **Camera & Background:**
+    - Camera Perspective: {angle_desc}
     - Background: Solid, PURE WHITE (RGB 255,255,255).
     - Aspect Ratio: Vertical 2:3.
     """
@@ -153,13 +153,15 @@ if any(st.session_state.gen_dict.values()):
             if data:
                 st.image(data, use_container_width=True)
                 
+                # 個別保存
                 angle_fn = get_safe_angle_name(name)
                 fn = f"pose_{pose_id}_{angle_fn}.jpg"
                 st.download_button(label=f"保存: {fn}", data=data, file_name=fn, mime="image/jpeg", key=f"dl_{idx}")
                 
+                # 個別再生成
                 st.markdown('<div class="regen-btn">', unsafe_allow_html=True)
                 if st.button(f"🔄 {name} 再生成", key=f"regen_{idx}"):
-                    with st.spinner("再生成中..."):
+                    with st.spinner("角度を調整して再生成中..."):
                         new_data = run_generation(name, angles_info[name], input_image)
                         if new_data:
                             st.session_state.gen_dict[name] = new_data
