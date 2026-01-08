@@ -11,7 +11,6 @@ import time
 # ==========================================
 
 def process_and_compress_image(img, target_width=1000, max_kb=300):
-    """2:3比率にリサイズし、300kb以下に圧縮する"""
     target_height = int(target_width * 1.5)
     img = img.resize((target_width, target_height), Image.LANCZOS)
     quality = 95
@@ -22,10 +21,9 @@ def process_and_compress_image(img, target_width=1000, max_kb=300):
         if size_kb <= max_kb or quality <= 10:
             break
         quality -= 5
-    return buf.getvalue(), size_kb
+    return buf.getvalue()
 
 def get_safe_angle_name(name):
-    """アングル名を英語のファイル名用に変換"""
     mapping = {
         "真正面 (Front)": "Front",
         "斜め前 (Quarter)": "Quarter",
@@ -34,10 +32,10 @@ def get_safe_angle_name(name):
     }
     return mapping.get(name, "pose")
 
-def get_b64_json_list(image_list, pose_id):
-    """JavaScript用：ポーズ番号を含めたファイル名リストを作成"""
+def get_b64_json_list(image_dict, pose_id):
     js_data = []
-    for name, data in image_list:
+    for name, data in image_dict.items():
+        if data is None: continue
         angle_fn = get_safe_angle_name(name)
         filename = f"pose_{pose_id}_{angle_fn}.jpg"
         b64 = base64.b64encode(data).decode()
@@ -48,17 +46,18 @@ def get_b64_json_list(image_list, pose_id):
 # 2. アプリ初期設定
 # ==========================================
 
-st.set_page_config(page_title="Multi-Angle Mannequin Gen", layout="wide")
+st.set_page_config(page_title="Selective Mannequin Gen", layout="wide")
 
 st.markdown("""
     <style>
     .stButton button { width: 100%; border-radius: 5px; height: 3em; font-weight: bold; }
     .stDownloadButton button { background-color: #f0f2f6; color: #31333F; height: 2.5em !important; }
+    /* 再生成ボタンを少し小さく目立たなくする */
+    .regen-btn button { height: 2em !important; font-size: 0.8em !important; background-color: #fff1f1; border: 1px solid #ffcaca; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🤖 マネキンポーズ素材一括生成")
-st.write("設定: 髪/服を完全除去したグレー素体 / 白背景 / 4アングル")
+st.title("🤖 マネキンポーズ素材生成 (個別再生成対応)")
 
 try:
     api_key = st.secrets["GOOGLE_API_KEY"]
@@ -67,118 +66,122 @@ except KeyError:
     st.stop()
 
 genai.configure(api_key=api_key)
-MODEL_NAME = 'gemini-3-pro-image-preview'
-model = genai.GenerativeModel(MODEL_NAME)
+model = genai.GenerativeModel('gemini-3-pro-image-preview')
 
-if 'generated_images' not in st.session_state:
-    st.session_state.generated_images = []
+# セッション状態の初期化
+if 'gen_dict' not in st.session_state:
+    st.session_state.gen_dict = {
+        "真正面 (Front)": None,
+        "斜め前 (Quarter)": None,
+        "下から (Low Angle)": None,
+        "斜め上から (High Angle)": None
+    }
+
+# --- 生成用共通関数 ---
+def run_generation(angle_key, angle_desc, input_img):
+    prompt = f"""
+    [Task: Generate Clean, Featureless Base Mannequin]
+    **CRITICAL NEGATIVE CONSTRAINTS:**
+    - NO HAIR. NO CLOTHES. NO FACIAL FEATURES. NO pedestals or bases.
+    **Instructions:**
+    Generate a uniform LIGHT GREY plastic mannequin base body.
+    Perspective: {angle_desc}
+    Background: Solid, PURE WHITE (RGB 255,255,255).
+    Aspect Ratio: Vertical 2:3.
+    """
+    try:
+        response = model.generate_content([prompt, input_img])
+        img_bytes = None
+        if hasattr(response, 'parts'):
+            for part in response.parts:
+                if hasattr(part, 'inline_data') and part.inline_data:
+                    img_bytes = part.inline_data.data
+                    break
+        if img_bytes:
+            raw_img = Image.open(io.BytesIO(img_bytes))
+            return process_and_compress_image(raw_img)
+    except Exception as e:
+        st.error(f"生成エラー ({angle_key}): {e}")
+    return None
 
 # ==========================================
-# 3. メインUI（サイドバー）
+# 3. UI（サイドバー）
 # ==========================================
 
 with st.sidebar:
     st.header("1. 保存設定")
-    pose_id = st.text_input("ポーズ番号 (例: 01, 02...)", value="01")
-    st.info(f"保存名: pose_{pose_id}_[Angle].jpg")
+    pose_id = st.text_input("ポーズ番号", value="01")
     
     st.divider()
     st.header("2. 写真をアップロード")
     uploaded_file = st.file_uploader("JPG/PNG形式", type=["jpg", "png", "jpeg"])
+    
     if uploaded_file:
         input_image = Image.open(uploaded_file)
         st.image(input_image, caption="元画像", use_container_width=True)
-        if st.button("4アングル一括生成を開始", type="primary"):
-            st.session_state.start_gen = True
+        
+        if st.button("4アングル一括生成", type="primary"):
+            angles_config = {
+                "真正面 (Front)": "Viewed directly from the straight-on front perspective.",
+                "斜め前 (Quarter)": "Viewed from a standard 45-degree three-quarter angle.",
+                "下から (Low Angle)": "A dynamic low-angle shot from below (worm's-eye view).",
+                "斜め上から (High Angle)": "A high-angle shot from diagonally above (bird's-eye view)."
+            }
+            
+            progress_bar = st.progress(0)
+            for i, (k, v) in enumerate(angles_config.items()):
+                with st.spinner(f"{k} を生成中..."):
+                    st.session_state.gen_dict[k] = run_generation(k, v, input_image)
+                progress_bar.progress((i + 1) / 4)
+            st.success("一括生成完了！")
 
 # ==========================================
-# 4. 生成ロジック
+# 4. 表示と個別操作
 # ==========================================
 
-if uploaded_file and st.session_state.get('start_gen'):
-    st.session_state.generated_images = []
-    angles = {
+if any(st.session_state.gen_dict.values()):
+    st.divider()
+    cols = st.columns(4)
+    
+    angles_info = {
         "真正面 (Front)": "Viewed directly from the straight-on front perspective.",
         "斜め前 (Quarter)": "Viewed from a standard 45-degree three-quarter angle.",
         "下から (Low Angle)": "A dynamic low-angle shot from below (worm's-eye view).",
         "斜め上から (High Angle)": "A high-angle shot from diagonally above (bird's-eye view)."
     }
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    total_angles = len(angles)
-    
-    for i, (angle_key, angle_desc) in enumerate(angles.items()):
-        status_text.write(f"🔄 生成中 ({i+1}/{total_angles}): {angle_key}...")
-        
-        # === プロンプトの超強化ポイント ===
-        prompt = f"""
-        [Task: Generate Clean, Featureless Base Mannequin]
-        
-        **CRITICAL NEGATIVE CONSTRAINTS (MUST FOLLOW):**
-        - NO HAIR. The head must be completely BALD and smooth.
-        - NO CLOTHES. The body must be completely NUDE and smooth featureless plastic.
-        - NO FACIAL FEATURES. No eyes, no nose, no mouth. A blank surface.
-        - NO pedestal, base, or props.
-        
-        **Generation Instructions:**
-        Based on the pose in the reference image, generate a uniform LIGHT GREY plastic mannequin base body.
-        The surface must be perfectly smooth and matte, stripping away all textures of hair and fabric from the original image.
-        Perspective: {angle_desc}
-        Background: Solid, PURE WHITE (RGB 255,255,255).
-        Aspect Ratio: Vertical 2:3.
-        """
-        # ================================
-        
-        try:
-            response = model.generate_content([prompt, input_image])
-            img_bytes = None
-            if hasattr(response, 'parts'):
-                for part in response.parts:
-                    if hasattr(part, 'inline_data') and part.inline_data:
-                        img_bytes = part.inline_data.data
-                        break
-            if img_bytes:
-                raw_img = Image.open(io.BytesIO(img_bytes))
-                processed_bytes, size_kb = process_and_compress_image(raw_img)
-                st.session_state.generated_images.append((angle_key, processed_bytes))
-            progress_bar.progress((i + 1) / total_angles)
-            time.sleep(0.5)
-        except Exception as e:
-            st.error(f"{angle_key} の生成に失敗しました: {e}")
-    status_text.success(f"✅ 生成完了！(髪/服完全除去・グレー素体)")
-    st.session_state.start_gen = False
 
-# ==========================================
-# 5. 表示と保存機能
-# ==========================================
-
-if st.session_state.generated_images:
-    st.divider()
-    cols = st.columns(4)
-    for idx, (name, data) in enumerate(st.session_state.generated_images):
+    for idx, (name, data) in enumerate(st.session_state.gen_dict.items()):
         with cols[idx]:
             st.subheader(name)
-            st.image(data, use_container_width=True)
-            
-            angle_fn = get_safe_angle_name(name)
-            current_fn = f"pose_{pose_id}_{angle_fn}.jpg"
-            st.download_button(label=f"保存: {current_fn}", data=data, file_name=current_fn, mime="image/jpeg", key=f"btn_{idx}")
+            if data:
+                st.image(data, use_container_width=True)
+                
+                # 個別保存
+                angle_fn = get_safe_angle_name(name)
+                fn = f"pose_{pose_id}_{angle_fn}.jpg"
+                st.download_button(label=f"保存: {fn}", data=data, file_name=fn, mime="image/jpeg", key=f"dl_{idx}")
+                
+                # --- 個別再生成ボタン ---
+                st.markdown('<div class="regen-btn">', unsafe_allow_html=True)
+                if st.button(f"🔄 {name} だけ再生成", key=f"regen_{idx}"):
+                    with st.spinner("再生成中..."):
+                        new_data = run_generation(name, angles_info[name], input_image)
+                        if new_data:
+                            st.session_state.gen_dict[name] = new_data
+                            st.rerun() # 画面を更新して新しい画像を表示
+                st.markdown('</div>', unsafe_allow_html=True)
+            else:
+                st.info("未生成")
 
+    # 一括保存
     st.divider()
-    
-    st.write(f"### 💾 一括保存 (pose_{pose_id})")
-    if st.button(f"4枚連続で保存ダイアログを開く", type="primary"):
-        json_data = get_b64_json_list(st.session_state.generated_images, pose_id)
-        
+    if st.button("4枚まとめて保存ダイアログを開く", type="primary"):
+        json_data = get_b64_json_list(st.session_state.gen_dict, pose_id)
         js_code = f"""
-        <html>
-        <body>
         <script>
             (async function() {{
                 const files = {json_data};
-                for (let i = 0; i < files.length; i++) {{
-                    const file = files[i];
+                for (let file of files) {{
                     const link = document.createElement('a');
                     link.href = file.data;
                     link.download = file.name;
@@ -189,8 +192,6 @@ if st.session_state.generated_images:
                 }}
             }})();
         </script>
-        </body>
-        </html>
         """
         components.html(js_code, height=1)
-        st.toast(f"ポーズ {pose_id} の一括保存を開始しました。")
+        st.toast("一括保存を開始しました。")
